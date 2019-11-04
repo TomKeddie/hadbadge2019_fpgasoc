@@ -1,19 +1,9 @@
 -include ../../local-settings.mk
 
-ifeq ("$(RISCV_TOOLCHAIN_PATH)", "")
-PREFIX := riscv32-unknown-elf-
-else
-PREFIX := $(RISCV_TOOLCHAIN_PATH)/riscv32-unknown-elf-
-endif
-CC := $(PREFIX)gcc
-AR := $(PREFIX)ar
-LD := $(PREFIX)ld
-OBJCOPY := $(PREFIX)objcopy
-OBJDUMP := $(PREFIX)objdump
-SIZE := $(PREFIX)size
-CHMOD := chmod
+include ../../toolchain-settings.mk
 
-CFLAGS=-Os -ggdb -I../ipl -march=rv32im -mabi=ilp32
+CFLAGS += -ggdb -I../ipl
+
 OBJS:=rom.o irq.o gdbstub.o loadipl.o ipl_flash.o
 
 DEPDIR := .deps
@@ -45,7 +35,6 @@ rom.elf: $(OBJS) sections.lds
 rom.bin: rom.elf
 	$(OBJCOPY) -O binary $< $@
 	$(OBJDUMP) -S $< > rom.disasm
-	$(CHMOD) -x $@
 
 clean:
 	rm -f rom.bin rom.elf $(OBJS)

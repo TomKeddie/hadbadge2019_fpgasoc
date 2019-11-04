@@ -2,6 +2,35 @@
 Top module for FPGA. Essentially instantiates the SOC and adds the FPGA-specific things like
 PLL, tristate buffers etc needed to interface with the hardware.
 */
+/*
+ * Copyright (C) 2019  Jeroen Domburg <jeroen@spritesmods.com>
+ * All rights reserved.
+ *
+ * BSD 3-clause, see LICENSE.bsd
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the <organization> nor the
+ *       names of its contributors may be used to endorse or promote products
+ *       derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 
 module top_fpga(
 		input clk, 
@@ -98,6 +127,8 @@ module top_fpga(
 	wire flash_oe;
 	wire flash_bus_qpi;
 	wire flash_sclk;
+	wire flash_cs;
+	wire flash_selected;
 	wire [29:0] genio_in;
 	wire [29:0] genio_out;
 	wire [29:0] genio_oe;
@@ -161,6 +192,7 @@ module top_fpga(
 		.psramb_oe(psramb_oe),
 
 		.flash_nce(flash_cs),
+		.flash_selected(flash_selected),
 		.flash_sclk(flash_sclk),
 		.flash_sin(flash_sin),
 		.flash_sout(flash_sout),
@@ -260,7 +292,7 @@ module top_fpga(
 
 	USRMCLK usrmclk_inst (
 		.USRMCLKI(flash_sclk),
-		.USRMCLKTS(flash_cs)
+		.USRMCLKTS(!flash_selected)
 	) /* synthesis syn_noprune=1 */;
 
 	//Note: JTAG specs say we should sample on the rising edge of TCK. However, the LA readings show that 

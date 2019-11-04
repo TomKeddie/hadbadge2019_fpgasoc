@@ -1,3 +1,18 @@
+/*
+ * Copyright 2019 Jeroen Domburg <jeroen@spritesmods.com>
+ * This is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This software is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with Foobar.  If not, see <https://www.gnu.org/licenses/>.
+ */
 
 //Functions here give a way to printf() text to the screen. It uses one of the
 //tile maps (a by default) as a console, and assumes an ASCII charset is loaded into that.
@@ -36,28 +51,34 @@ static int to_mapb=0;
 void console_write_char_raw(char c) {
 	uint32_t *map;
 	if (to_mapb) map=&GFXTILEMAPB[0]; else map=&GFXTILEMAPA[0];
-	if (xpos>=win_x+win_w || c=='\n') {
-		//printf("Next line; xpos=%d win_w=%d, c=%d\n", xpos, win_w, c);
+
+	if (xpos>=win_x+win_w) {
+		//Next line because we hit the end of the window.
 		xpos=win_x;
 		ypos++;
-		if (ypos>=win_y+win_h) {
-			//printf("Console scrolling because ypos %d >=win_y %d\n", ypos, win_y);
-			//Scroll up the window
-			for (int y=win_y; y<win_y+win_h-1; y++) {
-				for (int x=win_x; x<win_x+win_w; x++) {
-					map[y*GFX_TILEMAP_W+x]=map[(y+1)*GFX_TILEMAP_W+x];
-				}
-			}
-			//..and clear last line.
-			for (int y=win_y; y<win_y+win_w-1; y++) {
-				map[y*GFX_TILEMAP_W+win_x+win_w-1]=' ';
-			}
-			ypos--;
-		}
 	}
+
+	if (ypos>=win_y+win_h) {
+		//Scroll up the window
+		for (int y=win_y; y<win_y+win_h-1; y++) {
+			for (int x=win_x; x<win_x+win_w; x++) {
+				map[y*GFX_TILEMAP_W+x]=map[(y+1)*GFX_TILEMAP_W+x];
+			}
+		}
+		//..and clear last line.
+		for (int x=win_x; x<win_x+win_w; x++) {
+			map[(win_y+win_h-1)*GFX_TILEMAP_W+x]=' ';
+		}
+		ypos--;
+	}
+
 	if (c!='\n') {
 		map[ypos*GFX_TILEMAP_W+xpos]=c+attr;
 		xpos++;
+	} else {
+		//Next line because newline.
+		xpos=win_x;
+		ypos++; //note we handle ypos overflow only when the next
 	}
 }
 
@@ -117,7 +138,7 @@ static void console_write_char(char c) {
 }
 
 
-int console_write(char *data, int len) {
+int console_write(const char *data, int len) {
 	for (int i=0; i<len; i++) console_write_char(data[i]);
 	return len;
 }

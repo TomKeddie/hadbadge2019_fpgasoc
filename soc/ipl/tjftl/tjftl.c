@@ -1,4 +1,14 @@
 //tjflt - Tiny Janky / Journalling Flash Translation Layer
+/*
+ * Copyright 2019 Jeroen Domburg <jeroen@spritesmods.com>. Licensed under 
+ * the beer-ware license.
+ * ----------------------------------------------------------------------------
+ * "THE BEER-WARE LICENSE" (Revision 42):
+ * <jeroen@spritesmods.com> wrote this file.  As long as you retain this notice you
+ * can do whatever you want with this stuff. If we meet some day, and you think
+ * this stuff is worth it, you can buy me a beer in return. -Jeroen
+ * ----------------------------------------------------------------------------
+ */
 
 #include <stdio.h>
 #include <stdint.h>
@@ -81,6 +91,7 @@ struct tjftl_t {
 	int current_write_block;
 	int current_gc_block;
 	int free_blk_cnt; //This has the amount of blocks that are invalid/erased/entirely empty.
+	int prefer_first_sectors; //if this is 1, the first few sectors aren't entirely used. Prefer those so detecting a tjftl is easier.
 #if CACHE_LBALOC
 	uint32_t *lba_cache;
 #endif
@@ -113,6 +124,9 @@ static bool read_sect(tjftl_t *tj, int blk, int sect_in_blk, uint8_t *buf) {
 static bool write_blkhdr(tjftl_t *tj, int blk, const tjftl_block_t *hdr) {
 	int addr=blk*BLKSZ;
 	bool ret=tj->flash_program(addr, (uint8_t*)hdr, sizeof(tjftl_block_t), tj->flashcb_arg);
+	if (!ret) {
+		TJ_MSG("Write_blkhdr: flash_program failed at addr %d\n", addr);
+	}
 	return ret;
 }
 
@@ -194,8 +208,14 @@ static bool blk_initialize(tjftl_t *tj, int blkno, tjftl_block_t *blkh) {
 	blkh->serial=tj->current_serial;
 	bool ret;
 	ret=tj->flash_erase(blkno*BLKSZ, tj->flashcb_arg);
-	if (!ret) return false;
+	if (!ret) {
+		TJ_MSG("blk_initialize: flash_erase of block %d failed!\n", blkno);
+		return false;
+	}
 	ret=write_blkhdr(tj, blkno, blkh);
+	if (!ret) {
+		TJ_MSG("blk_initialize: write_blkhdr of block %d failed!\n", blkno);
+	}
 	return ret;
 }
 
@@ -228,11 +248,25 @@ static void cache_update(tjftl_t *tj, int lba, int blkno, int sec) {
 #endif
 }
 
+//Check the first 4 blocks. If 2 of them have valid tjftl headers, we assume this is a tjftl
+//partition.
+int tjftl_detect(flashcb_read_t rf, void *arg) {
+	tjftl_block_t blkh;
+	int valid_blocks=0;
+	for (int blk=0; blk<4; blk++) {
+		int addr=blk*BLKSZ;
+		bool ret=rf(addr, (uint8_t*)&blkh, sizeof(tjftl_block_t), arg);
+		if (!ret) return 0; //flash error = not detected
+		if (blkh_valid(&blkh)) valid_blocks++;
+	}
+	return valid_blocks>=2;
+}
+
 static bool garbage_collect(tjftl_t *tj);
 
-tjftl_t *tjftl_init(flashcb_read_t rf, flashcb_erase_32k_t ef, flashcb_program_t pf, void *arg, int size, int sect_cnt) {
+tjftl_t *tjftl_init(flashcb_read_t rf, flashcb_erase_32k_t ef, flashcb_program_t pf, void *arg, int size, int sect_cnt, int verbose) {
 	TJ_MSG("Initializing tjftl with size=%d, sect_cnt %d\n", size, sect_cnt);
-	tjftl_t *ret=malloc(sizeof(tjftl_t));
+	tjftl_t *ret=calloc(sizeof(tjftl_t), 1);
 	if (!ret) return NULL;
 #if CACHE_LBALOC
 	ret->lba_cache=calloc(sect_cnt, sizeof(uint32_t));
@@ -240,6 +274,7 @@ tjftl_t *tjftl_init(flashcb_read_t rf, flashcb_erase_32k_t ef, flashcb_program_t
 		free(ret);
 		return NULL;
 	}
+	if (verbose) printf("tjfl: allocated %d bytes for cache\n", sect_cnt*sizeof(uint32_t));
 #endif
 	ret->flash_read=rf;
 	ret->flash_erase=ef;
@@ -251,6 +286,7 @@ tjftl_t *tjftl_init(flashcb_read_t rf, flashcb_erase_32k_t ef, flashcb_program_t
 	ret->current_write_block=-1;
 	ret->current_gc_block=-1;
 	ret->free_blk_cnt=0;
+	ret->prefer_first_sectors=0;
 	bool all_ok=true;
 	for (int i=0; i<ret->backing_blks; i++) {
 		tjftl_block_t blkh;
@@ -262,12 +298,15 @@ tjftl_t *tjftl_init(flashcb_read_t rf, flashcb_erase_32k_t ef, flashcb_program_t
 				blk_fill_cache(ret, &blkh, i);
 			}
 		} else {
+			if (i<4) ret->prefer_first_sectors=1;
 			ret->free_blk_cnt++;
 		}
 	}
+	if (verbose) printf("tjfl: %d of %d blocks free.\n", ret->free_blk_cnt, ret->backing_blks);
 	if (ret->free_blk_cnt<GC_MIN_FREE_BLK_CNT) {
 		TJ_MSG("Starting initial garbage collection run...\n");
 		all_ok&=garbage_collect(ret);
+		if (verbose) printf("After garbage collection: %d blocks free.\n", ret->free_blk_cnt);
 	}
 	if (!all_ok) {
 		TJ_MSG("ERROR! tjftl failed to initialize.\n");
@@ -410,7 +449,7 @@ bool tjftl_write(tjftl_t *tj, int lba, const uint8_t *buf) {
 	
 //	TJ_MSG("tjfl_write lba %d, current_write_block %d\n", lba, tj->current_write_block);
 	//First, find current version of the block and mark as maybe-superseded.
-	//cache doesn't get a speed bump from non-superseded sectors, so we mark everything as superseded 
+	//cache doesn't get a speed boost from non-superseded sectors, so we mark everything as superseded 
 	//from the start when we initially write the sector.
 #if !CACHE_LBALOC 
 	int blkno, sect_in_blk;
@@ -427,7 +466,13 @@ bool tjftl_write(tjftl_t *tj, int lba, const uint8_t *buf) {
 	if (tj->current_write_block == -1) {
 		//We don't have a block that can accept another sector. We need to do some effort to find one...
 		//Let's look for a block that is either entirely empty, is invalid, or has some empty sectors in it.
-		int find_start=rand()%tj->backing_blks; //random starting point, yay wear leveling!
+		int find_start;
+		if (tj->prefer_first_sectors) {
+			find_start=0; //start allocating at the beginning
+		} else {
+			find_start=rand()%tj->backing_blks; //random starting point, yay wear leveling!
+		}
+
 		int blkno=find_start;
 		TJ_MSG("tjfl_write: find new empty block, start at: %d, free_cnt=%d\n", blkno, tj->free_blk_cnt);
 		do {
@@ -437,7 +482,10 @@ bool tjftl_write(tjftl_t *tj, int lba, const uint8_t *buf) {
 				//Found an invalid/erased block! Initialize it.
 				TJ_MSG("tjfl_write: %d is invalid or empty: using it\n", blkno);
 				ret=blk_initialize(tj, blkno, &blkh);
-				if (!ret) return false;
+				if (!ret) {
+				TJ_MSG("tjftl_write: Block initialize failed\n");
+					return false;
+				}
 				tj->current_write_block = blkno;
 			} else {
 				//No dice.
@@ -447,11 +495,19 @@ bool tjftl_write(tjftl_t *tj, int lba, const uint8_t *buf) {
 				blkno++;
 				if (blkno>=tj->backing_blks) blkno=0;
 			}
-		} while (tj->current_write_block == -1);
+		} while (tj->current_write_block == -1 && blkno!=find_start);
+		if (blkno>4) tj->prefer_first_sectors=0;
 	} else {
 		//We already have an active block. Grab its header.
 		ret=read_blkhdr(tj, tj->current_write_block, &blkh);
-		if (!ret) return false;
+		if (!ret) {
+			TJ_MSG("Huh? Read_blkhdr failed for block %d\n", tj->current_write_block);
+			return false;
+		}
+	}
+	if (tj->current_write_block == -1) {
+		TJ_MSG("WtF, no free block found?\n");
+		return false;
 	}
 
 	//We have a currently-active block with some free space when we end up here.
@@ -460,7 +516,10 @@ bool tjftl_write(tjftl_t *tj, int lba, const uint8_t *buf) {
 	TJ_CHECK(free_sec_in_blk!=-1, "block should have free sec");
 //	TJ_MSG("Going to write data to blk %d sec %d\n", tj->current_write_block, free_sec_in_blk);
 	ret=write_sect(tj, tj->current_write_block, free_sec_in_blk, buf);
-	if (!ret) return false;
+	if (!ret) {
+		TJ_MSG("Write sect failed\n");
+		return false;
+	}
 	blkh.bd[free_sec_in_blk].lba=lba;
 	blkh.bd[free_sec_in_blk].lba_inv=~lba;
 #if CACHE_LBALOC
@@ -477,7 +536,10 @@ bool tjftl_write(tjftl_t *tj, int lba, const uint8_t *buf) {
 	}
 #endif
 	ret=write_blkhdr(tj, tj->current_write_block, &blkh);
-	if (!ret) return false;
+	if (!ret) {
+		TJ_MSG("Write block header failed\n");
+		return false;
+	}
 	cache_update(tj, lba, tj->current_write_block, free_sec_in_blk);
 	//see if we used up the current block; if so we need to find a new one next
 	//time. Also check if we need to gc.
@@ -489,7 +551,10 @@ bool tjftl_write(tjftl_t *tj, int lba, const uint8_t *buf) {
 		//Garbage collect if we run out of free blocks, but not if we're already collecting garbage.
 		if (tj->free_blk_cnt<GC_MIN_FREE_BLK_CNT && tj->current_gc_block==-1) {
 			bool r=garbage_collect(tj);
-			if (!r) return false;
+			if (!r) {
+				TJ_MSG("Garbage collect failed.\n");
+				return false;
+			}
 		}
 	}
 	return true;

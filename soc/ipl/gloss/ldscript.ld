@@ -8,7 +8,7 @@ means.
 */
 
 MEMORY {
-	ram : org = 0x40002000, len = (8*1024*1024)-0x2040 /* save 1 cache line, for simulation */
+	ram : org = 0x40002000, len = (1*1024*1024)-0x2000 /* Bootloader plus IPL have the 1st megabyte */
 }
 
 _stack_size = 0x10000; /* 64K */
@@ -62,6 +62,10 @@ SECTIONS {
 
 ENTRY(_start)
 
+PROVIDE ( interrupt_vector_table = 0x40000020 );
+PROVIDE ( irq_stack_ptr = 0x400000a0 );
+PROVIDE ( rom_cart_boot_flag = 0x400000a4 );
+
 PROVIDE ( UART =        0x10000000 );
 PROVIDE ( MISC =        0x20000000 );
 PROVIDE ( LCD =         0x30000000 );
@@ -69,5 +73,6 @@ PROVIDE ( GFXREG =      0x50000000 );
 PROVIDE ( GFXPAL =      0x50002000 );
 PROVIDE ( GFXTILEMAPA = 0x50004000 );
 PROVIDE ( GFXTILEMAPB = 0x50008000 );
+PROVIDE ( GFXSPRITES =  0x5000C000 );
 PROVIDE ( GFXTILES =    0x50010000 );
 PROVIDE ( USB =         0x60000000 );
